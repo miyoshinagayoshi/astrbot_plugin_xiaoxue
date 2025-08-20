@@ -1,3 +1,7 @@
+# =========================================================================
+# service/call_comfy.py 的最终定制版 (完整无省略)
+# 严格按照您的要求，使用 Comp.File 发送视频
+# =========================================================================
 import uuid
 import aiohttp
 import json
@@ -6,10 +10,13 @@ import io
 import ssl
 import certifi
 from astrbot.api.event import MessageChain
+from astrbot.api import message_components as Comp
 from astrbot import logger
 from ..utils.utils import get_workflow_settings, create_workflow, get_config_section, evaluate_custom_rule
+import asyncio
 
 class Call_Comfy:
+    # --- 类变量定义保持100%原始状态 ---
     CLIENT_ID = str(uuid.uuid4())
     SERVER_URL = get_config_section('comfy').get('url_header') + "://" + get_config_section('comfy').get('server_domain')
     WS_HEADER = "ws" if get_config_section('comfy').get('url_header') == "http" else "wss"
@@ -17,7 +24,9 @@ class Call_Comfy:
     OUTPUT_IMAGE_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data/output")
     DEFAULT_WORKFLOW = get_config_section('comfy').get('default_workflow')
 
+    # --- generate_image 函数被最终定制 ---
     async def generate_image(self, info, astr_self, unified_msg_origin):
+        # 准备和提交工作流的逻辑，与原始版本完全一致
         image_url = info.get("send_image")
         if image_url:
             image_filename = info.get("send_image_key") + ".png"
@@ -31,10 +40,20 @@ class Call_Comfy:
         promptWorkflow = create_workflow(workflow_setting, info)
         queued_prompt_info = await self.queue_prompt(promptWorkflow)
         prompt_id = queued_prompt_info["prompt_id"]
-        image_file = await self.track_progress_and_get_images(prompt_id)
+        
+        # 调用我们升级过的文件查找函数
+        output_file_path = await self.track_progress_and_get_images(prompt_id)
 
+        # 如果没有找到任何文件，直接返回
+        if not output_file_path:
+            logger.error("任务执行完毕，但未找到任何输出文件。")
+            error_chain = MessageChain([Comp.Plain(text="任务执行完毕，但未找到任何输出文件。")])
+            await astr_self.context.send_message(unified_msg_origin, error_chain)
+            return
+
+        # 构建文本消息的逻辑，与原始版本完全一致
         complete_msg_setting = get_config_section('messages').get('complete_message')
-        complete_msg = " 图片完成 \n"
+        complete_msg = " 作品好了喵 \n"
         if complete_msg_setting:
             complete_msg_base = complete_msg_setting.get("base_string")
             if complete_msg_base:
@@ -45,10 +64,46 @@ class Call_Comfy:
                         info_value = info.get(key)
                         if info_value:
                             complete_msg = complete_msg + value + str(info_value) + "\n"
+        video_complete_msg_setting = get_config_section('messages').get('video_complete_message')
+        video_complete_msg = " 视频好了喵 \n" # 提供一个默认值
+        if video_complete_msg_setting:
+            video_complete_msg_base = video_complete_msg_setting.get("base_string")
+            if video_complete_msg_base:
+                video_complete_msg = video_complete_msg_base + "\n"
+                addition = video_complete_msg_setting.get("video_addtion")
+                if addition:
+                    for key, value in addition.items():
+                        info_value = info.get(key)
+                        if info_value:
+                            video_complete_msg = video_complete_msg + value + str(info_value) + "\n"                    
+        
+        # --- 核心定制：新的、区分文件类型的发送逻辑 ---
+        file_extension = os.path.splitext(output_file_path)[1].lower()
 
-        message_chain = MessageChain().message(complete_msg).file_image(image_file)
-        await astr_self.context.send_message(unified_msg_origin, message_chain)
+        # 如果是图片，就使用原始的、带信息框的发送方式
+        if file_extension in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+            logger.info(f"检测到图片文件，将以富媒体消息形式发送: {output_file_path}")
+            message_chain = MessageChain().message(complete_msg).file_image(output_file_path)
+            await astr_self.context.send_message(unified_msg_origin, message_chain)
 
+        # 如果是视频，就先发文字，再用 Comp.File 单独发送文件
+        elif file_extension == '.mp4':
+            logger.info(f"检测到视频文件，将根据您的要求以 Comp.File 形式发送: {output_file_path}")
+            # 1. 先发送文本消息
+            text_chain = MessageChain([Comp.Plain(text=video_complete_msg)])
+            await astr_self.context.send_message(unified_msg_origin, text_chain)
+            await asyncio.sleep(0.5)
+
+            # 2. 再单独发送视频文件
+            # --- 关键修改：使用 Comp.File ---
+            filename = os.path.basename(output_file_path) # 从路径中提取文件名
+            file_component = Comp.File(file=output_file_path, name=filename)
+            file_chain = MessageChain([file_component])
+            await astr_self.context.send_message(unified_msg_origin, file_chain)
+        else:
+            logger.warning(f"检测到不支持的文件类型，无法发送: {output_file_path}")
+
+    # --- 其他辅助函数保持100%原始状态 ---
     async def upload_image(self, image_url, filename):
         image_content = None
         content_type = 'image/png'
@@ -177,87 +232,64 @@ class Call_Comfy:
         except Exception as e:
             return False
 
+    # --- track_progress_and_get_images 函数保持我们升级后的“双重查找”版本 ---
     async def track_progress_and_get_images(self, prompt_id):
-
         ws_url = f"{self.SERVER_WS_URL}/ws?clientId={self.CLIENT_ID}"
-
-        output_images_details = []
-        prompt_done = False #暂时没用
-
+        
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(ws_url) as ws:
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.TEXT:
-                              
                         message_data = json.loads(msg.data)
-                        if "type" in message_data:
-                            msg_type = message_data["type"]
+                        if message_data.get("type") == "executing":
                             data = message_data.get("data", {})
-
-                            if msg_type == "status":
-                                queue_remaining = data.get("status", {}).get("execinfo", {}).get("queue_remaining", 0)
-                                print(f"队列状态更新: 剩余任务 {queue_remaining}")
-                                if queue_remaining == 0 and data.get("status", {}).get("execinfo", {}).get("prompt_id") == prompt_id:
-                                    pass
-
-                            elif msg_type == "execution_start":
-                                if data.get("prompt_id") == prompt_id:
-                                    print(f"Prompt {prompt_id} 开始执行...")
-
-                            elif msg_type == "execution_cached":
-                                if data.get("prompt_id") == prompt_id:
-                                    print(f"Prompt {prompt_id} 的结果从缓存加载。节点: {data.get('nodes')}")
-
-                            elif msg_type == "executing":
-                                current_prompt_id = data.get("prompt_id")
-                                node_id = data.get("node")
-                                if current_prompt_id == prompt_id:
-                                    if node_id is None:
-                                        print(f"Prompt {prompt_id} 执行完成。")
-                                        prompt_done = True
-                                        break # 我们的 prompt 执行完毕
-                                    else:
-                                        pass
-
-                            elif msg_type == "executed":
-                                if data.get("prompt_id") == prompt_id:
-                                    node_id = data.get("node")
-                                    outputs = data.get("output", {}).get("images", [])
-                                    print(f"Prompt {prompt_id} 节点 {node_id} 执行完毕。输出图片数量: {len(outputs)}")
-                                    for img_detail in outputs:
-                                        output_images_details.append(img_detail)
-                                        print(f"  找到图片: {img_detail.get('filename')}")
-
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        print(f"WebSocket 连接错误: {ws.exception()}")
-                        break
-                    elif msg.type == aiohttp.WSMsgType.CLOSED:
-                        print("WebSocket 连接已关闭。")
+                            if data.get("prompt_id") == prompt_id and data.get("node") is None:
+                                break
+                    elif msg.type in [aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED]:
                         break
 
         history = await self.get_history(prompt_id)
-        if history and prompt_id in history:
-            final_images_to_fetch = []
-            prompt_outputs = history[prompt_id].get("outputs", {})
-
-            for node_id, node_output in prompt_outputs.items():
-                #print(node_output)
-                if "images" in node_output:
-                    for img_info in node_output["images"]:
-                        print(f"从历史记录中找到图片: 节点 {node_id}, 文件名 {img_info.get('filename')}")
-                        if img_info not in final_images_to_fetch: # 避免重复
-                            final_images_to_fetch.append(img_info)
+        if not (history and prompt_id in history):
+            return None
         
-                    for img_detail in final_images_to_fetch:
-                        img_data = await self.get_image(
-                            img_detail["filename"],
-                            img_detail.get("subfolder", ""), # subfolder 可能不存在
-                            img_detail["type"]
-                        )
-                        if img_data:
-                            file_path = os.path.join(self.OUTPUT_IMAGE_FILE_PATH, img_detail["filename"])
-                            with open(file_path, "wb") as f:
-                                f.write(img_data)
-                            print(f"图片已保存到: {file_path}")
-                            #目前只处理第一张
-                            return file_path
+        prompt_outputs = history[prompt_id].get("outputs", {})
+        final_files_to_fetch = []
+        
+        # 核心补丁：在查找 "images" 的基础上，增加查找 "gifs"
+        for node_id, node_output in prompt_outputs.items():
+            if "images" in node_output:
+                for item in node_output["images"]:
+                    if isinstance(item, dict) and 'filename' in item:
+                        if item not in final_files_to_fetch:
+                            logger.info(f"找到图片文件: {item.get('filename')}")
+                            final_files_to_fetch.append(item)
+            
+            if "gifs" in node_output:
+                for item in node_output["gifs"]:
+                    if isinstance(item, dict) and 'filename' in item and item['filename'].endswith('.mp4'):
+                        if item not in final_files_to_fetch:
+                            logger.info(f"找到视频(.mp4)文件: {item.get('filename')}")
+                            final_files_to_fetch.append(item)
+        
+        if not final_files_to_fetch:
+            return None
+
+        first_file_detail = final_files_to_fetch[0]
+        try:
+            file_data = await self.get_image(
+                first_file_detail["filename"],
+                first_file_detail.get("subfolder", ""),
+                first_file_detail.get("type", "output")
+            )
+            if file_data:
+                os.makedirs(self.OUTPUT_IMAGE_FILE_PATH, exist_ok=True)
+                file_path = os.path.join(self.OUTPUT_IMAGE_FILE_PATH, first_file_detail["filename"])
+                with open(file_path, "wb") as f:
+                    f.write(file_data)
+                logger.info(f"文件已成功保存到: {file_path}")
+                return file_path
+        except Exception as e:
+            logger.error(f"下载或保存最终文件时出错: {e}")
+            return None
+        
+        return None

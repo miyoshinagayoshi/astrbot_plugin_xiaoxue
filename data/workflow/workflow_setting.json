@@ -33,5 +33,25 @@
                 "input_param": "cfg"
             }
         ]
+    },
+    "img2video": {
+        "file": "img2video",
+        "node_mapping": [
+            {
+                "node_number": "58",
+                "node_property": "image",
+                "input_param": "send_image"
+            },
+            {
+                "node_number": "119",
+                "node_property": "text",
+                "input_param": "positive_prompt"
+            },
+            {
+                "node_number": "118",
+                "node_property": "lora",
+                "input_param": "lora"
+            }
+        ]
     }
 }

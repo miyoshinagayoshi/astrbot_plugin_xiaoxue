@@ -1,20 +1,27 @@
 system:
-  image_to_image: False #有图生图需求请一定要设定为True
+  image_to_image: True #有图生图需求请一定要设定为True
 
 comfy:
   url_header: "http"            #协议类型 http or https
-  server_domain: "IP地址:端口"   #你的comfy服务器,ip:端口,例子: 10.10.10.10:5000
+  server_domain: "127.0.0.1:8188"   #你的comfy服务器,ip:端口,例子: 10.10.10.10:5000
   default_workflow: "test"       #默认使用的工作流
 
-# 设定画图开始和完成发送的消息，可修改内容。
+#  --- 文生图消息 ---
 messages:
-  start_message: " 努力画图中喵ing♡~~~ "
+  start_message: " 正在开始画图"
   complete_message:
-    base_string: " 图片好了喵 "   #这个必须设定
+    base_string: " 图片完成 "   #这个必须设定
     addtion:                     #从这里开始下面都是可选，按照 属性: "输出内容" 添加，属性值会放到内容后面，会自动添加换行 
       prompt: "提示词: "           
       cfg: "cfg: "
       model: "模型: "
+  # --- 图生视频消息 ---
+  video_start_message: " 正在制作视频，耗时约为10-15分钟，请耐心等待 "
+  video_complete_message:
+    base_string: " 视频制作完成 "
+    video_addtion:
+      positive_prompt: "视频提示词: "
+      lora: "LoRA风格: "      
 
 #现在仅作为后缀名的取得，不写就会全部默认是safetensors
 comfy_models:                         
@@ -44,12 +51,20 @@ parameters:
     type: "float"
     description: "默认为5,以0.5为单位，用户可以自定义。"
     default: 5
-
-#如果你有多个工作流，就必须在这里设定切换规则，目前只支持模型和参数设定规则。
-#判断逻辑是从上到下，满足匹配条件就会停止，所以请注意设定顺序！
-#更详细的例子可以参照sample文件夹里的config文件
-#switch_workflow:
-#  - workflow_name: "test_vpred"
-#    model: "catTowerNoobaiXL_v17Vpred"
-#  - workflow_name: "test_hires"
-#    param_rule: "isHires"           
+# --- 新增的图生视频参数 ---
+  - name: "task_type"
+    type: "str"
+    description: "指定任务类型。如果用户明确要求'图生视频'，LLM应将此值设为'video'。"
+    default: "image" # 默认任务类型是文生图
+  - name: "positive_prompt"
+    type: "str"
+    description: "【仅当task_type为'video'时使用】用于图生视频的动态效果提示词，可使用中文。"
+    default: "大摆锤"
+  - name: "lora"
+    type: "str"
+    description: "【仅当task_type为'video'时使用】选择一个视频动态风格的LoRA。必须从以下列表中选择一个精确的文件名：'dbc.safetensors', 'ruyao.safetensors',如果未指定，则使用默认的'dbc.safetensors'。"
+    default: "dbc.safetensors"
+switch_workflow:
+  # 规则：当 task_type 参数的值等于 "video" 时，切换到 img2video 工作流
+  - workflow_name: "img2video"
+    param_rule: "task_type,video"

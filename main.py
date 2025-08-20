@@ -77,29 +77,42 @@ class MyPlugin(Star):
     # 构建默认值
     default_info = {}
     skipflg = False
+    
+    # 填充所有参数的默认值
     for param in get_config_section("parameters"):
         param_name = param.get("name")
         if param_name:
             param_default_value = param.get("default")
             if param_default_value is not None:
                 default_info[param_name] = param_default_value
-            
-            param_with_image = param.get("with_image")
-            if param_with_image is not None:
-                param_value = kwargs.get(param_name)
-                if not param_value:
-                    param_value = param_default_value
+    
+    # *** HIGHLIGHT START ***
+    # --- 核心修改：使用新的 task_type 开关来判断是否需要图片 ---
 
-                if param_with_image == param_value:
-                    key = f"{event.unified_msg_origin}:{event.get_sender_id()}"
-                    key = key.replace(":", "_")
-                    image_url = get_from_image_session(key)
-                    if image_url:
-                        default_info["send_image"] = image_url
-                        default_info["send_image_key"] = key
-                    else:
-                        skipflg = True
-                        yield "告诉用户图片找不到"
+    # 从LLM的返回或默认值中获取任务类型
+    task_type = kwargs.get("task_type", default_info.get("task_type"))
+
+    # 如果任务类型是 'video'
+    if task_type == 'video':
+        # 检查图生视频总开关是否开启
+        if not system_i_t_i:
+            yield "图生视频功能当前已禁用。"
+            return # 直接结束
+
+        key = f"{event.unified_msg_origin}:{event.get_sender_id()}"
+        key = key.replace(":", "_")
+        image_url = get_from_image_session(key)
+        
+        if image_url:
+            # 如果找到了图片，就把它加入到参数篮子里
+            default_info["send_image"] = image_url
+            default_info["send_image_key"] = key
+        else:
+            # 如果需要视频但找不到图片，则设置跳过标志并报错
+            skipflg = True
+            yield "您要求进行图生视频，但我没有在上下文中找到可用的图片。请先发送一张图片。"
+    # --- 核心修改结束 ---
+    # *** HIGHLIGHT END ***
         
     if not skipflg:
       info = {**default_info, **kwargs}
@@ -129,3 +142,5 @@ class MyPlugin(Star):
              save_key = f"{event.unified_msg_origin}:{event.get_sender_id()}"
              save_key = save_key.replace(":", "_")
              save_to_image_session(item.url, save_key)
+             # 增加一条日志，方便我们调试
+             logger.info(f"已为用户 {save_key} 保存待处理的图片URL。")
